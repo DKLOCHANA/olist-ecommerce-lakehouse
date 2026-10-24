@@ -1,81 +1,85 @@
-# Running on Databricks and Azure (free tiers)
+# Cloud setup: Azure Data Lake + Databricks Free Edition
 
-There are two ways to run this in the cloud. Start with **Option A**: it is free and needs
-no credit card. Option B adds Azure Data Lake Storage as the landing zone.
+This is how the project is deployed: raw files land in **Azure Data Lake Storage Gen2**, and a
+**Databricks** job (serverless, Free Edition) ingests them and builds the lakehouse.
 
-## Option A: Databricks Free Edition (free, no credit card)
+```
+Azure ADLS Gen2  ──SAS (secret scope)──▶  ingest task  ──▶  UC Volume  ──▶  bronze ▶ silver ▶ gold ▶ quality
+olistlakelochana/raw/olist/<date>/        (Databricks)      raw.landing
+```
 
-1. **Sign up** at <https://www.databricks.com/learn/free-edition>. You get a serverless
-   workspace with a Unity Catalog catalog called `workspace`.
-2. **Create the landing volume.** In the workspace open *SQL Editor* and run:
-   ```sql
-   CREATE SCHEMA IF NOT EXISTS workspace.raw;
-   CREATE VOLUME IF NOT EXISTS workspace.raw.landing;
-   ```
-3. **Upload the data.** Download the dataset (`make data`, or manually from
-   [Kaggle](https://www.kaggle.com/datasets/olistbr/brazilian-ecommerce)), then in
-   *Catalog → workspace → raw → landing* click **Upload to this volume** and upload the CSV
-   files (skip `olist_geolocation_dataset.csv`, it is not used).
-4. **Install the Databricks CLI** and log in:
+## 1. Azure: the landing zone
+
+| Resource | Value |
+|---|---|
+| Resource group | `rg-olist-lakehouse` (Southeast Asia) |
+| Storage account | `olistlakelochana` — StorageV2, Standard, **LRS**, **hierarchical namespace on** (ADLS Gen2) |
+| Container | `raw` (private) |
+| Load folder | `raw/olist/<yyyy-mm-dd>/` — one folder per load; the ingest task always takes the newest |
+
+Upload a new load (from Azure Cloud Shell or any machine with the Azure CLI):
+
+```bash
+curl -sL -o olist.zip https://www.kaggle.com/api/v1/datasets/download/olistbr/brazilian-ecommerce
+unzip -oq olist.zip -d olist && rm olist/olist_geolocation_dataset.csv
+az storage blob upload-batch --account-name olistlakelochana --auth-mode key \
+  -d raw --destination-path olist/$(date +%F) -s olist --overwrite
+```
+
+or from this repo: `python scripts/upload_to_adls.py --account olistlakelochana`.
+
+Cost: a few hundred MB on LRS hot storage costs cents per month.
+
+## 2. Connect Databricks to Azure (one time)
+
+Databricks Free Edition can't use Unity Catalog external locations, so the job reads ADLS
+with a **read-only, expiring SAS token** stored in a Databricks **secret scope**
+(`olist` / `adls-sas`). The token never appears in code, Git or job parameters.
+
+1. **Create the SAS token** — Azure portal → storage account `olistlakelochana` →
+   *Security + networking* → **Shared access signature**:
+   - Allowed services: **Blob** · Allowed resource types: **Container** + **Object**
+   - Allowed permissions: **Read** + **List** only
+   - Expiry: e.g. 3–6 months ahead · Allowed protocols: HTTPS only
+   - Click **Generate SAS and connection string** and copy the **SAS token**.
+
+   Or in Cloud Shell:
    ```bash
-   # macOS: brew tap databricks/tap && brew install databricks
-   # Windows: winget install Databricks.DatabricksCLI
-   databricks auth login --host https://<your-workspace-url>
+   az storage container generate-sas --account-name olistlakelochana --auth-mode key \
+     --name raw --permissions rl --expiry $(date -u -d "+90 days" +%Y-%m-%dT%H:%MZ) --https-only -o tsv
    ```
-5. **Deploy and run the job** from the repo folder:
-   ```bash
-   databricks bundle validate
-   databricks bundle deploy -t dev
-   databricks bundle run olist_lakehouse_job -t dev
-   ```
-6. **Look at the results.** In *Jobs & Pipelines* you will see the four-task job
-   (bronze → silver → gold → quality). In *Catalog* you will find
-   `workspace.bronze.*`, `workspace.silver.*` and `workspace.gold.*`. Open the
-   *SQL Editor* and paste any query from `sql/analytics`, replacing
-   `{{ gold.fact_order_items }}` with `workspace.gold.fact_order_items`.
+2. **Store it** — in Databricks open the Git folder → `notebooks/00_connect_azure`, paste the
+   token into the `sas_token` box, click **Run all**. The last cell removes the box again.
 
-Tip: take screenshots of the job run graph, the catalog tables and a dashboard on
-`gold.mart_daily_sales` for your README and LinkedIn post.
+## 3. Databricks: deploy and run
 
-## Option B: Azure Data Lake Storage Gen2 as the landing zone
+The repo is cloned into the workspace as a **Git folder**
+(*Workspace → Create → Git folder* → `https://github.com/DKLOCHANA/olist-ecommerce-lakehouse.git`).
 
-Azure's free account gives a starting credit for the first month and some always-free
-services; storing a few hundred MB in ADLS costs only cents. Check the current offer at
-<https://azure.microsoft.com/free>.
+- **Deploy the job** — open the Git folder, open `databricks.yml` and use **Deploy** in the
+  bundle panel (target `dev`). Or from a terminal with the Databricks CLI:
+  ```bash
+  databricks auth login --host https://<workspace>.cloud.databricks.com
+  databricks bundle deploy -t dev
+  databricks bundle run olist_lakehouse_job -t dev
+  ```
+- **Run it** — *Jobs & Pipelines* → `[dev …] olist-lakehouse-dev` → **Run now**. Five tasks run
+  on serverless compute: ingest → bronze → silver → gold → quality.
+- **Explore** — open `notebooks/02_explore_gold` for the business questions, or query
+  `workspace.gold.*` in the SQL editor.
 
-1. **Create a storage account** in the Azure portal: *Storage accounts → Create*,
-   Standard / LRS, and on the *Advanced* tab turn on **Hierarchical namespace** (this makes
-   it ADLS Gen2).
-2. **Upload the raw files** with the script in this repo:
-   ```bash
-   pip install -e ".[azure]"
-   az login
-   python scripts/upload_to_adls.py --account <storage-account> --container raw
-   ```
-   Files land in `abfss://raw@<account>.dfs.core.windows.net/olist/<today>/`.
-3. **Read them from Databricks.** Databricks Free Edition cannot connect to your own cloud
-   storage, so for this step use an **Azure Databricks** workspace (Azure offers a
-   14-day Premium trial). In that workspace:
-   - create a *Storage credential* (Access Connector for Azure Databricks with the
-     *Storage Blob Data Contributor* role on the storage account) and an
-     *External location* for the container (Catalog → External data);
-   - deploy with the ADLS path as the raw path:
-     ```bash
-     databricks bundle deploy -t dev \
-       --var="raw_path=abfss://raw@<account>.dfs.core.windows.net/olist/<date>" \
-       --var="catalog=<your catalog>"
-     ```
+No Azure yet? Set the bundle variable `ingest_source` to `kaggle` and the ingest task downloads
+the public dataset directly.
 
-## Turning on CD from GitHub
+## 4. CD from GitHub (optional)
 
-1. In Databricks create a personal access token (*Settings → Developer → Access tokens*).
-2. In GitHub open the repo → *Settings → Secrets and variables → Actions*:
-   - Secrets: `DATABRICKS_HOST` (workspace URL) and `DATABRICKS_TOKEN`
-   - Variables: `DATABRICKS_ENABLED` = `true`
-3. Every push to `main` now runs CI, and if it passes, `cd.yml` deploys the bundle to
-   the `prod` target and runs the job.
+1. Databricks → *Settings → Developer → Access tokens* → create a token.
+2. GitHub repo → *Settings → Secrets and variables → Actions*:
+   secrets `DATABRICKS_HOST`, `DATABRICKS_TOKEN`; variable `DATABRICKS_ENABLED=true`.
+3. Every push to `main` then runs CI and, if it passes, deploys and runs the `prod` job.
 
 ## Cost safety
 
-- The job schedule is **paused** by default; un-pause it only if you want daily runs.
-- Delete the Azure resource group when you are done so nothing keeps billing.
+- The job schedule is **paused** by default.
+- Free Edition is free; the only Azure cost is storage (cents). Delete the resource group
+  `rg-olist-lakehouse` when you no longer need it.

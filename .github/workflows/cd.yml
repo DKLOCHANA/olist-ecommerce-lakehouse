@@ -1,0 +1,29 @@
+name: CD - deploy to Databricks
+
+# Runs after CI succeeds on main. Enable it by adding the repository
+# variable DATABRICKS_ENABLED=true and the secrets DATABRICKS_HOST and
+# DATABRICKS_TOKEN (Settings -> Secrets and variables -> Actions).
+on:
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    if: >-
+      vars.DATABRICKS_ENABLED == 'true' &&
+      (github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success')
+    runs-on: ubuntu-latest
+    environment: production
+    env:
+      DATABRICKS_HOST: ${{ secrets.DATABRICKS_HOST }}
+      DATABRICKS_TOKEN: ${{ secrets.DATABRICKS_TOKEN }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: databricks/setup-cli@main
+      - name: Deploy bundle
+        run: databricks bundle deploy -t prod
+      - name: Run pipeline job
+        run: databricks bundle run olist_lakehouse_job -t prod

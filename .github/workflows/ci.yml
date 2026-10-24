@@ -1,0 +1,57 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: pip install ruff
+      - run: ruff check .
+      - run: ruff format --check .
+
+  test:
+    needs: lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - name: Install
+        run: pip install -e ".[dev]"
+      - name: Unit + end-to-end tests
+        run: pytest
+      - name: Run full pipeline on sample data
+        run: |
+          python scripts/generate_sample_data.py --out data/raw --orders 1000
+          python -m olist_lakehouse.pipeline
+          python -m olist_lakehouse.analytics --export analytics_results.md
+      - uses: actions/upload-artifact@v4
+        with:
+          name: analytics-results
+          path: analytics_results.md
+
+  validate-bundle:
+    needs: lint
+    runs-on: ubuntu-latest
+    if: ${{ vars.DATABRICKS_ENABLED == 'true' }}
+    env:
+      DATABRICKS_HOST: ${{ secrets.DATABRICKS_HOST }}
+      DATABRICKS_TOKEN: ${{ secrets.DATABRICKS_TOKEN }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: databricks/setup-cli@main
+      - run: databricks bundle validate -t dev

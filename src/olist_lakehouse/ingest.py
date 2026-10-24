@@ -22,6 +22,7 @@ import gzip
 import io
 import logging
 import os
+import re
 import sys
 import urllib.request
 import zipfile
@@ -55,21 +56,32 @@ def _check_complete(target: Path) -> list[str]:
     return sorted(WANTED)
 
 
+SAS_PATTERN = re.compile(r"sv=[^\s'\"?&]+(?:&[A-Za-z]+=[^\s'\"&]+)+")
+
+
+def clean_sas(raw: str) -> str:
+    """Extract the SAS token from whatever was pasted (token, ?token, SAS URL or connection string)."""
+    candidates = [m for m in SAS_PATTERN.findall(raw) if "sig=" in m]
+    if not candidates:
+        raise ValueError("No SAS token found: expected a value like 'sv=...&sig=...'")
+    return candidates[-1]
+
+
 def get_sas_token() -> str:
     """SAS token from the environment, or from the Databricks secret scope ``olist/adls-sas``."""
-    token = os.getenv("AZURE_STORAGE_SAS")
-    if token:
-        return token.lstrip("?")
-    try:
-        from databricks.sdk.runtime import dbutils  # available on Databricks
+    raw = os.getenv("AZURE_STORAGE_SAS")
+    if not raw:
+        try:
+            from databricks.sdk.runtime import dbutils  # available on Databricks
 
-        return dbutils.secrets.get(SECRET_SCOPE, SECRET_KEY).lstrip("?")
-    except Exception as exc:  # noqa: BLE001
-        raise RuntimeError(
-            "No Azure credential found. Set AZURE_STORAGE_SAS, or store a read-only SAS token in "
-            f"the Databricks secret scope '{SECRET_SCOPE}' (key '{SECRET_KEY}') - see "
-            "notebooks/00_connect_azure.py"
-        ) from exc
+            raw = dbutils.secrets.get(SECRET_SCOPE, SECRET_KEY)
+        except Exception as exc:  # noqa: BLE001
+            raise RuntimeError(
+                "No Azure credential found. Set AZURE_STORAGE_SAS, or store a read-only SAS token in "
+                f"the Databricks secret scope '{SECRET_SCOPE}' (key '{SECRET_KEY}') - see "
+                "notebooks/00_connect_azure.py"
+            ) from exc
+    return clean_sas(raw)
 
 
 # --------------------------------------------------------------------------- sources

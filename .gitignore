@@ -1,0 +1,17 @@
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+.pytest_cache/
+.ruff_cache/
+build/
+dist/
+data/raw/*
+!data/raw/.gitkeep
+data/lakehouse/
+spark-warehouse/
+metastore_db/
+derby.log
+.databricks/
+.env
+*.zip

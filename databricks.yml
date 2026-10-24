@@ -1,0 +1,75 @@
+# Databricks Asset Bundle: deploys the pipeline as a 4-task job
+# (bronze -> silver -> gold -> quality) on serverless compute.
+#
+#   databricks bundle validate
+#   databricks bundle deploy -t dev
+#   databricks bundle run olist_lakehouse_job -t dev
+#
+# Works on Databricks Free Edition and on Azure Databricks.
+
+bundle:
+  name: olist_lakehouse
+
+variables:
+  catalog:
+    description: Unity Catalog catalog that holds the bronze/silver/gold schemas
+    default: workspace
+  raw_path:
+    description: Where the raw Olist CSV files land (UC Volume or abfss:// path)
+    default: /Volumes/workspace/raw/landing
+
+resources:
+  jobs:
+    olist_lakehouse_job:
+      name: olist-lakehouse-${bundle.target}
+      max_concurrent_runs: 1
+      schedule:
+        quartz_cron_expression: "0 30 6 * * ?" # daily 06:30
+        timezone_id: Asia/Colombo
+        pause_status: PAUSED # un-pause in the UI when you want it to run daily
+      email_notifications:
+        on_failure:
+          - ${workspace.current_user.userName}
+      environments:
+        - environment_key: default
+          spec:
+            environment_version: "2"
+      tasks:
+        - task_key: bronze
+          environment_key: default
+          spark_python_task:
+            python_file: ./jobs/run_layer.py
+            parameters: [--src, "${workspace.file_path}/src", --layer, bronze,
+                         --catalog, "${var.catalog}", --raw-path, "${var.raw_path}"]
+        - task_key: silver
+          depends_on: [{ task_key: bronze }]
+          environment_key: default
+          spark_python_task:
+            python_file: ./jobs/run_layer.py
+            parameters: [--src, "${workspace.file_path}/src", --layer, silver, --catalog, "${var.catalog}"]
+        - task_key: gold
+          depends_on: [{ task_key: silver }]
+          environment_key: default
+          spark_python_task:
+            python_file: ./jobs/run_layer.py
+            parameters: [--src, "${workspace.file_path}/src", --layer, gold, --catalog, "${var.catalog}"]
+        - task_key: quality
+          depends_on: [{ task_key: gold }]
+          environment_key: default
+          spark_python_task:
+            python_file: ./jobs/run_layer.py
+            parameters: [--src, "${workspace.file_path}/src", --layer, quality, --catalog, "${var.catalog}"]
+
+sync:
+  exclude:
+    - data/**
+    - .venv/**
+
+targets:
+  dev:
+    mode: development # prefixes resources with [dev <user>] and pauses schedules
+    default: true
+  prod:
+    mode: production
+    workspace:
+      root_path: /Workspace/Shared/.bundle/${bundle.name}/${bundle.target}

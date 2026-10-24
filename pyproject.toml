@@ -1,0 +1,36 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "olist-lakehouse"
+version = "1.0.0"
+description = "End-to-end medallion lakehouse for the Olist e-commerce dataset (Spark, Delta Lake, Databricks, Azure)"
+readme = "README.md"
+requires-python = ">=3.10"
+authors = [{ name = "Lochana Edirisooriya" }]
+license = { text = "MIT" }
+dependencies = []
+
+[project.optional-dependencies]
+local = ["pyspark==4.0.1", "delta-spark==4.0.0"]
+dev = ["pyspark==4.0.1", "delta-spark==4.0.0", "pytest>=8", "ruff>=0.6"]
+azure = ["azure-storage-file-datalake>=12.16", "azure-identity>=1.17"]
+
+[project.scripts]
+olist-pipeline = "olist_lakehouse.pipeline:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
+
+[tool.ruff]
+line-length = 110
+target-version = "py310"
+src = ["src", "tests", "scripts"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP", "SIM"]

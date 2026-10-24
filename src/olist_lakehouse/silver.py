@@ -47,7 +47,7 @@ def cast_columns(df: DataFrame, source: Source) -> DataFrame:
     failures = [F.when(F.col(c).isNotNull() & cast.isNull(), F.lit(c)) for c, cast in casts.items()]
     flags = F.array_compact(F.array(*failures)) if failures else F.array().cast("array<string>")
     df = df.withColumn("_cast_failures", flags)
-    return df.withColumns(casts)
+    return df.withColumns(casts) if casts else df  # Spark Connect rejects an empty mapping
 
 
 def standardise(df: DataFrame, source: Source) -> DataFrame:

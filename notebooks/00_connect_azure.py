@@ -20,11 +20,18 @@ dbutils.widgets.text("sas_token", "", "Azure SAS token")
 
 # COMMAND ----------
 
+import re
+
 from databricks.sdk import WorkspaceClient
 
 SCOPE, KEY = "olist", "adls-sas"
-token = dbutils.widgets.get("sas_token").strip().lstrip("?")
-assert token.startswith("sv=") or "sig=" in token, "Paste the SAS *token* (it starts with 'sv=')"
+raw = dbutils.widgets.get("sas_token")
+# accept a token, a SAS URL or a connection string; keep only the 'sv=...&sig=...' part
+matches = [m for m in re.findall(r"sv=[^\s'\"?&]+(?:&[A-Za-z]+=[^\s'\"&]+)+", raw) if "sig=" in m]
+assert matches, "Paste the SAS token from the Azure portal (it starts with 'sv=' and contains 'sig=')"
+token = matches[-1]
+params = dict(p.split("=", 1) for p in token.split("&"))
+print("permissions:", params.get("sp"), "| expires:", params.get("se"))
 
 w = WorkspaceClient()
 if SCOPE not in [s.name for s in w.secrets.list_scopes()]:

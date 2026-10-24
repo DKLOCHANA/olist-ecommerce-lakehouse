@@ -121,11 +121,10 @@ def run(store: TableStore) -> dict[str, dict[str, int]]:
     for source in SOURCES.values():
         bronze = latest_batch(store.read("bronze", source.name))
         valid, invalid = transform(bronze, source)
-        valid = valid.cache()
+        # no df.cache(): it isn't available on Databricks serverless compute
         store.upsert(valid, "silver", source.name, source.keys)
         store.write(invalid, "silver", f"{source.name}_quarantine", mode="append")
         stats[source.name] = {"valid": valid.count(), "quarantined": invalid.count()}
-        valid.unpersist()
         log.info("silver.%s: %s", source.name, stats[source.name])
     return stats
 

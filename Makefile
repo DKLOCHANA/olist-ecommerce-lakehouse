@@ -1,4 +1,4 @@
-.PHONY: install sample data pipeline analytics test lint format clean deploy
+.PHONY: install sample data ingest pipeline analytics test lint format clean deploy
 
 install:            ## install the package with dev tools
 	pip install -e ".[dev]"
@@ -8,6 +8,9 @@ sample:             ## generate the small synthetic sample dataset
 
 data:               ## download the real Olist dataset from Kaggle
 	bash scripts/download_olist.sh data/raw
+
+ingest:             ## pull the newest load from Azure ADLS (needs AZURE_STORAGE_SAS)
+	python -m olist_lakehouse.ingest --source adls --account olistlakelochana --target data/raw
 
 pipeline:           ## bronze -> silver -> gold -> data quality
 	python -m olist_lakehouse.pipeline

@@ -1,5 +1,5 @@
-# Databricks Asset Bundle: deploys the pipeline as a 4-task job
-# (bronze -> silver -> gold -> quality) on serverless compute.
+# Databricks Asset Bundle: deploys the pipeline as a 5-task job
+# (ingest from Azure ADLS -> bronze -> silver -> gold -> quality) on serverless compute.
 #
 #   databricks bundle validate
 #   databricks bundle deploy -t dev
@@ -15,8 +15,14 @@ variables:
     description: Unity Catalog catalog that holds the bronze/silver/gold schemas
     default: workspace
   raw_path:
-    description: Where the raw Olist CSV files land (UC Volume or abfss:// path)
+    description: Landing zone the ingest task writes to and bronze reads from (UC Volume)
     default: /Volumes/workspace/raw/landing
+  ingest_source:
+    description: "adls = Azure Data Lake Storage Gen2 (needs the olist/adls-sas secret), kaggle = public download"
+    default: adls
+  azure_account:
+    description: Azure storage account (ADLS Gen2) that holds the raw files
+    default: olistlakelochana
 
 resources:
   jobs:
@@ -34,8 +40,18 @@ resources:
         - environment_key: default
           spec:
             environment_version: "2"
+            dependencies:
+              - azure-storage-file-datalake>=12.16
       tasks:
+        - task_key: ingest
+          environment_key: default
+          spark_python_task:
+            python_file: ./jobs/run_layer.py
+            parameters: [--src, "${workspace.file_path}/src", --layer, ingest, --catalog, "${var.catalog}",
+                         --raw-path, "${var.raw_path}", --ingest-source, "${var.ingest_source}",
+                         --azure-account, "${var.azure_account}"]
         - task_key: bronze
+          depends_on: [{ task_key: ingest }]
           environment_key: default
           spark_python_task:
             python_file: ./jobs/run_layer.py

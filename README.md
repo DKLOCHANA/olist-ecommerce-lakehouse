@@ -98,6 +98,13 @@ gold.fact_order_items: 2337 rows
 data quality: 50 checks, 0 errors, 0 warnings
 ```
 
+## Live run
+
+The pipeline runs as a scheduled job on **Databricks** (serverless, Unity Catalog), pulling the raw
+files from **Azure Data Lake Storage Gen2** - all five tasks green on the full dataset in about 6 minutes:
+
+![Databricks job run: ingest from Azure ADLS, bronze, silver, gold, quality](docs/images/databricks_job_run.jpg)
+
 ## Key findings (real data)
 
 Results from running the pipeline on the full Olist dataset ([all results](docs/results_real_data.md)):

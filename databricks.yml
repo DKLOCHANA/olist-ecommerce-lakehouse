@@ -79,7 +79,6 @@ resources:
 sync:
   exclude:
     - data/**
-    - .venv/**
 
 targets:
   dev:
